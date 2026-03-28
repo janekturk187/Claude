@@ -1,0 +1,42 @@
+{
+  "alpaca": {
+    "api_key": "YOUR_ALPACA_API_KEY",
+    "secret_key": "YOUR_ALPACA_SECRET_KEY",
+    "paper": true,
+    "base_url": "https://paper-api.alpaca.markets"
+  },
+  "polygon": {
+    "api_key": "YOUR_POLYGON_API_KEY"
+  },
+  "claude": {
+    "model": "claude-haiku-4-5-20251001",
+    "max_tokens": 256
+  },
+  "watchlist": {
+    "tickers": ["AAPL", "MSFT", "NVDA", "TSLA", "AMZN"]
+  },
+  "risk": {
+    "max_position_pct": 0.05,
+    "max_daily_loss_pct": 0.02,
+    "max_open_positions": 3,
+    "reward_risk_ratio": 2.0,
+    "news_blackout_minutes": 5
+  },
+  "signal": {
+    "min_sentiment_score": 7,
+    "min_confidence": 6,
+    "min_relative_volume": 1.5,
+    "session_sentiment_window": 5
+  },
+  "trading_hours": {
+    "start": "09:45",
+    "midday_pause_start": "11:30",
+    "midday_pause_end": "13:30",
+    "end": "15:30",
+    "timezone": "America/New_York"
+  },
+  "database": {
+    "path": "daytrading.db"
+  },
+  "log_level": "INFO"
+}

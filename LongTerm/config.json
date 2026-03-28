@@ -1,0 +1,32 @@
+{
+  "claude": {
+    "model": "claude-opus-4-6",
+    "max_tokens": 2048
+  },
+  "fmp": {
+    "api_key": "YOUR_FMP_API_KEY"
+  },
+  "fred": {
+    "api_key": "YOUR_FRED_API_KEY"
+  },
+  "watchlist": {
+    "tickers": ["AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "TSLA"]
+  },
+  "analysis": {
+    "earnings_lookback_quarters": 4,
+    "risk_factor_lookback_years": 2,
+    "min_thesis_score": 6
+  },
+  "schedule": {
+    "earnings_check_interval_hours": 6,
+    "macro_refresh_interval_hours": 24,
+    "weekly_report_day": "Sunday"
+  },
+  "database": {
+    "path": "longterm.db"
+  },
+  "reports": {
+    "output_dir": "reports_output"
+  },
+  "log_level": "INFO"
+}
