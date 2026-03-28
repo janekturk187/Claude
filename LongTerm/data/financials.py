@@ -7,8 +7,9 @@ for the last N quarters.
 """
 
 import logging
-import requests
 from typing import Optional
+
+from data import _http
 
 logger = logging.getLogger(__name__)
 
@@ -19,8 +20,7 @@ def _get(endpoint: str, api_key: str, params: dict = None) -> Optional[list]:
     url = f"{_FMP_BASE}/{endpoint}"
     p = {"apikey": api_key, **(params or {})}
     try:
-        resp = requests.get(url, params=p, timeout=15)
-        resp.raise_for_status()
+        resp = _http.get_with_retry(url, params=p, timeout=15)
         return resp.json()
     except Exception as e:
         logger.error("FMP request failed (%s): %s", endpoint, e)

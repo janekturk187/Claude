@@ -11,7 +11,7 @@ class Storage:
         self._init_db()
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, check_same_thread=False)
         conn.row_factory = sqlite3.Row
         return conn
 
@@ -31,6 +31,9 @@ class Storage:
                     vwap        REAL,
                     UNIQUE(ticker, timestamp, resolution)
                 );
+
+                CREATE INDEX IF NOT EXISTS idx_bars_ticker_ts
+                    ON bars(ticker, timestamp);
 
                 CREATE TABLE IF NOT EXISTS news_events (
                     id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -154,7 +157,21 @@ class Storage:
             row = conn.execute(
                 """
                 SELECT COALESCE(SUM(pnl), 0) FROM trades
-                WHERE status = 'closed' AND closed_at > date('now')
+                WHERE status = 'closed'
+                  AND date(closed_at) = date('now')
                 """
             ).fetchone()
             return row[0]
+
+    def prune_bars(self, keep_days: int = 5):
+        """
+        Delete bars older than keep_days to prevent unbounded table growth.
+        Call once at session startup — 5 tickers × 390 bars/day = ~2000 rows/day.
+        """
+        with self._connect() as conn:
+            deleted = conn.execute(
+                "DELETE FROM bars WHERE timestamp < datetime('now', ? || ' days')",
+                (f"-{keep_days}",),
+            ).rowcount
+        if deleted:
+            logger.info("Pruned %d old bars (keep_days=%d)", deleted, keep_days)

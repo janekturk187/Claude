@@ -6,6 +6,7 @@ All rules are enforced before any order is submitted.
 """
 
 import logging
+import time
 from datetime import datetime, time as dtime
 from zoneinfo import ZoneInfo
 
@@ -16,7 +17,8 @@ def _market_time(tz_name: str) -> dtime:
     return datetime.now(ZoneInfo(tz_name)).time()
 
 
-def check(signal: dict, db, cfg, last_news_time: dict) -> tuple[bool, str | None]:
+def check(signal: dict, db, cfg, last_news_time: dict,
+          alpaca_client=None) -> tuple[bool, str | None]:
     """
     Run all risk gate checks for a prospective trade.
 
@@ -46,7 +48,7 @@ def check(signal: dict, db, cfg, last_news_time: dict) -> tuple[bool, str | None
 
     # 2. Daily loss limit
     daily_pnl = db.get_daily_pnl()
-    account_equity = _get_account_equity(cfg)
+    account_equity = _get_account_equity(alpaca_client) if alpaca_client else None
     if account_equity and daily_pnl < -(account_equity * cfg.risk.max_daily_loss_pct):
         return False, f"daily loss limit hit (P&L: ${daily_pnl:.2f})"
 
@@ -61,7 +63,6 @@ def check(signal: dict, db, cfg, last_news_time: dict) -> tuple[bool, str | None
         return False, f"already in a position for {ticker}"
 
     # 5. News blackout — don't enter within N minutes of a fresh headline
-    import time
     last = last_news_time.get(ticker)
     if last is not None:
         age_seconds = time.monotonic() - last
@@ -73,13 +74,10 @@ def check(signal: dict, db, cfg, last_news_time: dict) -> tuple[bool, str | None
     return True, None
 
 
-def _get_account_equity(cfg) -> float | None:
-    """Fetch current account equity from Alpaca for P&L limit calculation."""
+def _get_account_equity(alpaca_client) -> float | None:
+    """Fetch current account equity from an existing Alpaca client."""
     try:
-        from alpaca.trading.client import TradingClient
-        client = TradingClient(cfg.alpaca.api_key, cfg.alpaca.secret_key, paper=cfg.alpaca.paper)
-        account = client.get_account()
-        return float(account.equity)
+        return float(alpaca_client.get_account().equity)
     except Exception as e:
         logger.warning("Could not fetch account equity: %s", e)
         return None

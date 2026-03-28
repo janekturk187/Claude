@@ -12,9 +12,9 @@ from typing import Optional
 
 import anthropic
 
-logger = logging.getLogger(__name__)
+from analysis import _claude
 
-_client: Optional[anthropic.Anthropic] = None
+logger = logging.getLogger(__name__)
 
 _SYSTEM_PROMPT = (
     "You are a senior fundamental equity analyst. Analyze the provided filing "
@@ -44,13 +44,6 @@ Respond with exactly this JSON structure:
 }}"""
 
 
-def _get_client() -> anthropic.Anthropic:
-    global _client
-    if _client is None:
-        _client = anthropic.Anthropic()
-    return _client
-
-
 def analyze_filing(ticker: str, filing_type: str, period: str,
                    text: str, cfg, macro_context: str = "") -> Optional[dict]:
     """
@@ -67,11 +60,14 @@ def analyze_filing(ticker: str, filing_type: str, period: str,
     Returns:
         Parsed analysis dict, or None on failure.
     """
-    # Truncate text to leave room for prompt + response tokens
-    max_text_chars = (cfg.max_tokens * 3)
-    if len(text) > max_text_chars:
-        text = text[:max_text_chars]
-        logger.debug("Truncated %s %s filing to %d chars", ticker, filing_type, max_text_chars)
+    # Truncate text to fit within model context window.
+    # claude-opus-4 has a 200k token context window; reserve ~4k tokens for the
+    # prompt template and response. cfg.max_tokens is the *output* limit, not the
+    # context window, so do not use it here (~3 chars per token on average).
+    MAX_FILING_CHARS = 580_000  # ≈ 193k tokens, leaves headroom for prompt + response
+    if len(text) > MAX_FILING_CHARS:
+        text = text[:MAX_FILING_CHARS]
+        logger.debug("Truncated %s %s filing to %d chars", ticker, filing_type, MAX_FILING_CHARS)
 
     prompt = _USER_PROMPT.format(
         ticker=ticker,
@@ -83,7 +79,7 @@ def analyze_filing(ticker: str, filing_type: str, period: str,
 
     raw = None
     try:
-        msg = _get_client().messages.create(
+        msg = _claude.create_message(
             model=cfg.model,
             max_tokens=cfg.max_tokens,
             system=_SYSTEM_PROMPT,

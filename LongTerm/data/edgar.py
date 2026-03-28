@@ -6,46 +6,73 @@ the filing text for Claude to analyze.
 """
 
 import logging
+import threading
 import time
-import requests
 from typing import Optional
+
+from data import _http
 
 logger = logging.getLogger(__name__)
 
 _EDGAR_BASE = "https://data.sec.gov"
-_HEADERS = {"User-Agent": "PelosiResearch research@example.com"}  # SEC requires a User-Agent
+
+# SEC requires a real User-Agent. Call set_user_agent() at startup with a
+# value from config so the SEC can contact you if your bot misbehaves.
+_HEADERS = {"User-Agent": "LongTermAnalysis contact@example.com"}
+
+# Ticker -> zero-padded CIK map, loaded once per process from SEC's JSON file.
+# _TICKER_MAP_LOCK ensures the ~1 MB JSON is fetched exactly once even when
+# multiple ticker threads call _get_cik concurrently on first run.
+_TICKER_MAP: dict[str, str] = {}
+_TICKER_MAP_LOCK = threading.Lock()
+
+
+def set_user_agent(user_agent: str) -> None:
+    """Set the User-Agent header for all EDGAR requests (call once at startup)."""
+    global _HEADERS
+    _HEADERS = {"User-Agent": user_agent}
+
+
+def _load_ticker_map() -> dict[str, str]:
+    """
+    Load and cache the full SEC company-tickers map.
+    The JSON (~1 MB) is fetched once per process and reused for all tickers.
+    Thread-safe: concurrent callers block until the first fetch completes.
+    """
+    global _TICKER_MAP
+    if _TICKER_MAP:
+        return _TICKER_MAP
+    with _TICKER_MAP_LOCK:
+        if _TICKER_MAP:  # re-check inside lock — another thread may have populated it
+            return _TICKER_MAP
+        try:
+            resp = _http.get_with_retry(
+                "https://www.sec.gov/files/company_tickers.json",
+                headers=_HEADERS,
+                timeout=10,
+            )
+            _TICKER_MAP = {
+                entry["ticker"].upper(): str(entry["cik_str"]).zfill(10)
+                for entry in resp.json().values()
+                if entry.get("ticker")
+            }
+            logger.debug("Loaded %d tickers from SEC company_tickers.json", len(_TICKER_MAP))
+        except Exception as e:
+            logger.error("Failed to load SEC ticker map: %s", e)
+    return _TICKER_MAP
 
 
 def _get_cik(ticker: str) -> Optional[str]:
-    """Resolve a ticker symbol to an SEC CIK number."""
-    try:
-        resp = requests.get(
-            "https://efts.sec.gov/LATEST/search-index?q=%22{}%22&dateRange=custom&startdt=2020-01-01&forms=10-K".format(ticker),
-            headers=_HEADERS,
-            timeout=10,
-        )
-        # Use the company tickers JSON endpoint instead — more reliable
-        resp = requests.get(
-            "https://www.sec.gov/files/company_tickers.json",
-            headers=_HEADERS,
-            timeout=10,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        ticker_upper = ticker.upper()
-        for entry in data.values():
-            if entry.get("ticker", "").upper() == ticker_upper:
-                return str(entry["cik_str"]).zfill(10)
-    except Exception as e:
-        logger.error("CIK lookup failed for %s: %s", ticker, e)
-    return None
+    """Resolve a ticker symbol to a zero-padded SEC CIK number."""
+    return _load_ticker_map().get(ticker.upper())
 
 
 def get_recent_filings(ticker: str, form_type: str = "10-K", count: int = 2) -> list[dict]:
     """
     Fetch metadata for the most recent filings of a given type.
 
-    Returns a list of dicts with keys: accession_number, filing_date, form_type, document_url
+    Returns a list of dicts with keys:
+        ticker, cik, form_type, filing_date, accession_number, document_url
     """
     cik = _get_cik(ticker)
     if not cik:
@@ -53,26 +80,30 @@ def get_recent_filings(ticker: str, form_type: str = "10-K", count: int = 2) -> 
 
     try:
         url = f"{_EDGAR_BASE}/submissions/CIK{cik}.json"
-        resp = requests.get(url, headers=_HEADERS, timeout=15)
-        resp.raise_for_status()
+        resp = _http.get_with_retry(url, headers=_HEADERS, timeout=15)
         data = resp.json()
 
-        filings = data.get("filings", {}).get("recent", {})
-        forms   = filings.get("form", [])
-        dates   = filings.get("filingDate", [])
-        accessions = filings.get("accessionNumber", [])
+        filings      = data.get("filings", {}).get("recent", {})
+        forms        = filings.get("form", [])
+        dates        = filings.get("filingDate", [])
+        accessions   = filings.get("accessionNumber", [])
+        primary_docs = filings.get("primaryDocument", [])
 
         results = []
-        for form, date, accession in zip(forms, dates, accessions):
+        for form, date, accession, primary_doc in zip(forms, dates, accessions, primary_docs):
             if form == form_type:
                 acc_clean = accession.replace("-", "")
-                doc_url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{acc_clean}/{accession}-index.htm"
+                doc_url = (
+                    f"https://www.sec.gov/Archives/edgar/data/"
+                    f"{int(cik)}/{acc_clean}/{primary_doc}"
+                )
                 results.append({
                     "ticker":           ticker,
+                    "cik":              cik,
                     "form_type":        form,
                     "filing_date":      date,
                     "accession_number": accession,
-                    "index_url":        doc_url,
+                    "document_url":     doc_url,
                 })
                 if len(results) >= count:
                     break
@@ -88,16 +119,15 @@ def get_recent_filings(ticker: str, form_type: str = "10-K", count: int = 2) -> 
 def fetch_filing_text(filing: dict, max_chars: int = 30000) -> Optional[str]:
     """
     Download and return the plain text of a filing, truncated to max_chars.
-    SEC EDGAR provides .txt versions of all filings.
+    Uses the primary document URL resolved during get_recent_filings.
     """
-    accession = filing["accession_number"].replace("-", "")
-    cik_url_part = filing.get("cik", "")
-    # Construct the primary document URL — fall back to index page if needed
-    text_url = filing.get("text_url") or filing.get("index_url", "")
+    text_url = filing.get("document_url", "")
+    if not text_url:
+        logger.error("No document_url in filing dict for %s", filing.get("accession_number"))
+        return None
 
     try:
-        resp = requests.get(text_url, headers=_HEADERS, timeout=30)
-        resp.raise_for_status()
+        resp = _http.get_with_retry(text_url, headers=_HEADERS, timeout=30)
         text = resp.text[:max_chars]
         logger.debug("Fetched filing %s (%d chars)", filing["accession_number"], len(text))
         time.sleep(0.1)  # SEC rate limit: 10 requests/sec max

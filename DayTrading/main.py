@@ -45,6 +45,7 @@ def run():
     )
 
     db = Storage(cfg.db_path)
+    db.prune_bars()
     session_sentiment = SessionSentiment(window=cfg.signal.session_sentiment_window)
     order_manager = OrderManager(cfg)
 
@@ -78,6 +79,9 @@ def run():
         )
 
         # Get recent bars for technical analysis
+        # price_stream is bound by the time on_bar is first called (after start())
+        if price_stream is None:
+            return
         recent_bars = price_stream.aggregator.get_bars(ticker, n=30)
         if len(recent_bars) < 10:
             return  # not enough data yet
@@ -86,20 +90,23 @@ def run():
         sentiment_score = session_sentiment.score(ticker)
         sentiment_delta = session_sentiment.delta(ticker)
 
-        signal = evaluate_signal(ticker, technical, sentiment_score, sentiment_delta, cfg.signal)
-        if signal is None:
+        sig = evaluate_signal(ticker, technical, sentiment_score, sentiment_delta, cfg.signal)
+        if sig is None:
             return
 
-        db.save_signal(signal)
+        db.save_signal(sig)
 
-        allowed, reason = risk_check(signal, db, cfg, _last_news_time)
+        allowed, reason = risk_check(sig, db, cfg, _last_news_time,
+                                     alpaca_client=order_manager.client)
         if not allowed:
             logger.info("Signal blocked by risk gate for %s: %s", ticker, reason)
             return
 
-        order_manager.submit(signal, db)
+        order_manager.submit(sig, db)
 
     # --- Start streams ---
+    # price_stream is declared before start() so on_bar's guard check is never None
+    price_stream = None
     news_stream = NewsStream(cfg.polygon.api_key, cfg.tickers, on_headline=on_headline)
     price_stream = PriceStream(cfg.alpaca.api_key, cfg.alpaca.secret_key,
                                cfg.tickers, on_bar=on_bar)

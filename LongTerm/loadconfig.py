@@ -20,6 +20,11 @@ class FREDConfig:
 
 
 @dataclass
+class SecConfig:
+    user_agent: str
+
+
+@dataclass
 class AnalysisConfig:
     earnings_lookback_quarters: int
     risk_factor_lookback_years: int
@@ -38,6 +43,7 @@ class Config:
     claude: ClaudeConfig
     fmp: FMPConfig
     fred: FREDConfig
+    sec: SecConfig
     tickers: list
     analysis: AnalysisConfig
     schedule: ScheduleConfig
@@ -59,6 +65,7 @@ def load_config(path: str = "config.json") -> Config:
         claude=ClaudeConfig(**d["claude"]),
         fmp=FMPConfig(**d["fmp"]),
         fred=FREDConfig(**d["fred"]),
+        sec=SecConfig(**d.get("sec", {"user_agent": "LongTermAnalysis contact@example.com"})),
         tickers=d["watchlist"]["tickers"],
         analysis=AnalysisConfig(**d["analysis"]),
         schedule=ScheduleConfig(**d["schedule"]),
@@ -82,3 +89,12 @@ def _validate(cfg: Config) -> None:
         errors.append("watchlist.tickers cannot be empty")
     if errors:
         raise ValueError("Config validation failed:\n" + "\n".join(f"  - {e}" for e in errors))
+
+    import logging as _logging
+    _log = _logging.getLogger(__name__)
+    if "contact@example.com" in cfg.sec.user_agent or "YourName" in cfg.sec.user_agent:
+        _log.warning(
+            "sec.user_agent appears to be the placeholder value ('%s'). "
+            "The SEC requires a real contact email — update config.json.",
+            cfg.sec.user_agent,
+        )

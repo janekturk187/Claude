@@ -18,6 +18,7 @@ Usage:
 import argparse
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import schedule
 
@@ -31,7 +32,7 @@ from reports import weekly_report
 logger = logging.getLogger(__name__)
 
 
-def run_filing_analysis(ticker: str, db: Storage, cfg):
+def run_filing_analysis(ticker: str, db: Storage, cfg, force: bool = False):
     """Fetch the latest 10-K and 10-Q for a ticker and analyze with Claude."""
     macro_snaps = db.get_latest_macro()
     from data.macro import macro_context_summary
@@ -44,6 +45,10 @@ def run_filing_analysis(ticker: str, db: Storage, cfg):
             continue
 
         filing = filings[0]
+        if not force and db.has_company_profile(ticker, form, filing["filing_date"]):
+            logger.info("Skipping %s %s %s — already in database", ticker, form, filing["filing_date"])
+            continue
+
         text = edgar.fetch_filing_text(filing)
         if not text:
             continue
@@ -60,7 +65,7 @@ def run_filing_analysis(ticker: str, db: Storage, cfg):
             db.save_company_profile(ticker, form, filing["filing_date"], result)
 
 
-def run_earnings_analysis(ticker: str, db: Storage, cfg):
+def run_earnings_analysis(ticker: str, db: Storage, cfg, force: bool = False):
     """Score the latest earnings report for a ticker."""
     income = financials.get_income_statement(ticker, cfg.fmp.api_key, quarters=4)
     surprises = financials.get_earnings_surprises(ticker, cfg.fmp.api_key, quarters=4)
@@ -70,24 +75,30 @@ def run_earnings_analysis(ticker: str, db: Storage, cfg):
         return
 
     period = income[0].get("period", "latest")
-    result = earnings_scorer.score(ticker, period, income, surprises, cfg.claude)
-    if result:
-        db.save_earnings_score(ticker, period, result)
+    if not force and db.has_earnings_score(ticker, period):
+        logger.info("Skipping earnings score for %s %s — already in database", ticker, period)
+    else:
+        result = earnings_scorer.score(ticker, period, income, surprises, cfg.claude)
+        if result:
+            db.save_earnings_score(ticker, period, result)
 
-    # Also persist raw financials
-    cashflow = financials.get_cash_flow(ticker, cfg.fmp.api_key, quarters=1)
-    balance = financials.get_balance_sheet(ticker, cfg.fmp.api_key, quarters=1)
-    if income and cashflow and balance:
-        merged = {
-            **{k: income[0].get(k) for k in ("revenue", "gross_margin", "operating_margin")},
-            "free_cash_flow": cashflow[0].get("free_cash_flow") if cashflow else None,
-            "debt_to_equity": balance[0].get("debt_to_equity") if balance else None,
-            "roe": None,
-        }
-        metrics = financials.get_key_metrics(ticker, cfg.fmp.api_key)
-        if metrics:
-            merged["roe"] = metrics.get("roe")
-        db.save_financials(ticker, income[0].get("date", period), merged)
+    fin_period = income[0].get("date", period)
+    if not force and db.has_financials(ticker, fin_period):
+        logger.info("Skipping financials for %s %s — already in database", ticker, fin_period)
+    else:
+        cashflow = financials.get_cash_flow(ticker, cfg.fmp.api_key, quarters=1)
+        balance = financials.get_balance_sheet(ticker, cfg.fmp.api_key, quarters=1)
+        if income and cashflow and balance:
+            merged = {
+                **{k: income[0].get(k) for k in ("revenue", "gross_margin", "operating_margin")},
+                "free_cash_flow": cashflow[0].get("free_cash_flow") if cashflow else None,
+                "debt_to_equity": balance[0].get("debt_to_equity") if balance else None,
+                "roe": None,
+            }
+            metrics = financials.get_key_metrics(ticker, cfg.fmp.api_key)
+            if metrics:
+                merged["roe"] = metrics.get("roe")
+            db.save_financials(ticker, fin_period, merged)
 
 
 def run_macro_refresh(db: Storage, cfg):
@@ -114,19 +125,24 @@ def run_weekly_report(db: Storage, cfg):
     logger.info("Weekly report: %s", path)
 
 
-def full_cycle(db: Storage, cfg, tickers: list):
+def full_cycle(db: Storage, cfg, tickers: list, force: bool = False):
     """Run a complete analysis cycle for all tickers."""
     logger.info("Starting full analysis cycle for: %s", tickers)
 
     run_macro_refresh(db, cfg)
 
-    for ticker in tickers:
+    def _analyze(ticker: str):
         logger.info("--- Analyzing %s ---", ticker)
-        try:
-            run_filing_analysis(ticker, db, cfg)
-            run_earnings_analysis(ticker, db, cfg)
-        except Exception as e:
-            logger.error("Cycle failed for %s: %s", ticker, e)
+        run_filing_analysis(ticker, db, cfg, force=force)
+        run_earnings_analysis(ticker, db, cfg, force=force)
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        futures = {pool.submit(_analyze, t): t for t in tickers}
+        for future in as_completed(futures):
+            ticker = futures[future]
+            exc = future.exception()
+            if exc:
+                logger.error("Cycle failed for %s: %s", ticker, exc)
 
     run_thesis_check(db, cfg)
     logger.info("Full cycle complete")
@@ -136,6 +152,8 @@ def main():
     parser = argparse.ArgumentParser(description="Long-Term Investment Analysis System")
     parser.add_argument("--report", action="store_true", help="Generate weekly report only")
     parser.add_argument("--ticker", help="Run analysis for a single ticker only")
+    parser.add_argument("--force", action="store_true",
+                        help="Re-analyze even if a filing/score is already in the database")
     parser.add_argument("--schedule", action="store_true",
                         help="Run on automated schedule (blocking)")
     args = parser.parse_args()
@@ -147,12 +165,17 @@ def main():
         format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
     )
 
+    edgar.set_user_agent(cfg.sec.user_agent)
+
     db = Storage(cfg.db_path)
     tickers = [args.ticker] if args.ticker else cfg.tickers
 
     if args.report:
         run_weekly_report(db, cfg)
         return
+
+    if args.force:
+        logger.info("--force: skipping deduplication checks")
 
     if args.schedule:
         logger.info("Running on schedule — earnings check every %dh, macro every %dh, report on %s",
@@ -169,14 +192,14 @@ def main():
         schedule.every().week.do(run_weekly_report, db=db, cfg=cfg)
 
         # Run once immediately on startup
-        full_cycle(db, cfg, tickers)
+        full_cycle(db, cfg, tickers, force=args.force)
 
         while True:
             schedule.run_pending()
             time.sleep(60)
     else:
         # Single run
-        full_cycle(db, cfg, tickers)
+        full_cycle(db, cfg, tickers, force=args.force)
 
 
 if __name__ == "__main__":

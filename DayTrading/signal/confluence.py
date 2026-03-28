@@ -12,18 +12,26 @@ logger = logging.getLogger(__name__)
 
 
 def _strength(technical: dict, sentiment_score: float,
-              sentiment_delta: Optional[float], cfg) -> str:
+              sentiment_delta: Optional[float], direction: str, cfg) -> str:
     """
     Classify signal strength based on how many confluence factors align.
+    Direction-aware: bullish scoring for longs, bearish scoring for shorts.
     Returns: "strong" | "moderate" | "weak" | "none"
     """
     score = 0
+    bearish_threshold = 10 - cfg.min_sentiment_score
 
-    # Sentiment factors
-    if sentiment_score >= 8:
-        score += 2
-    elif sentiment_score >= cfg.min_sentiment_score:
-        score += 1
+    # Sentiment factors — scored relative to the signal direction
+    if direction == "long":
+        if sentiment_score >= 8:
+            score += 2
+        elif sentiment_score >= cfg.min_sentiment_score:
+            score += 1
+    else:  # short
+        if sentiment_score <= 2:
+            score += 2
+        elif sentiment_score <= bearish_threshold:
+            score += 1
 
     if sentiment_delta is not None and abs(sentiment_delta) >= 2:
         score += 1
@@ -65,7 +73,9 @@ def evaluate(ticker: str, technical: dict, sentiment_score: Optional[float],
         logger.debug("%s: no sentiment data — skip", ticker)
         return None
 
-    if sentiment_score < cfg.min_sentiment_score and sentiment_score > (10 - cfg.min_sentiment_score):
+    bullish_threshold = cfg.min_sentiment_score
+    bearish_threshold = 10 - cfg.min_sentiment_score
+    if bearish_threshold < sentiment_score < bullish_threshold:
         logger.debug("%s: sentiment neutral (%.1f) — skip", ticker, sentiment_score)
         return None
 
@@ -89,7 +99,7 @@ def evaluate(ticker: str, technical: dict, sentiment_score: Optional[float],
             )
         return None
 
-    strength = _strength(technical, sentiment_score, sentiment_delta, cfg)
+    strength = _strength(technical, sentiment_score, sentiment_delta, direction, cfg)
     if strength == "none":
         return None
 

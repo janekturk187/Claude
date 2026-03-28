@@ -13,6 +13,9 @@ from typing import Optional
 
 import anthropic
 
+from analysis import _claude
+from analysis.earnings_scorer import consecutive_beats
+
 logger = logging.getLogger(__name__)
 
 _SYSTEM_PROMPT = (
@@ -29,7 +32,7 @@ Original thesis assumptions:
 Latest company profile (from most recent filing analysis):
 {profile}
 
-Latest earnings score:
+Latest earnings data:
 {earnings}
 
 For each assumption, determine if it is still valid, weakened, or broken.
@@ -61,8 +64,15 @@ def check_thesis(thesis: dict, profile: Optional[dict],
         Check result dict, or None on failure.
     """
     if profile is None and not earnings_history:
-        logger.warning("No data available to check thesis for %s", thesis["ticker"])
-        return None
+        logger.warning("No data for %s — flagging thesis until analysis runs", thesis["ticker"])
+        return {
+            "ticker":            thesis["ticker"],
+            "thesis_id":         thesis["id"],
+            "overall_status":    "unknown",
+            "flag":              True,
+            "flag_reason":       "No company profile or earnings data available — run a full analysis cycle for this ticker.",
+            "assumption_checks": [],
+        }
 
     try:
         assumptions = json.loads(thesis.get("assumptions", "[]"))
@@ -76,23 +86,26 @@ def check_thesis(thesis: dict, profile: Optional[dict],
         if profile and k in profile
     } if profile else {}
 
-    earnings_summary = [
+    recent = [
         {k: e[k] for k in ("period", "eps_beat", "guidance_dir", "quality_score", "trend")
          if k in e}
-        for e in earnings_history[:2]
+        for e in earnings_history[:4]
     ]
+    earnings_data = {
+        "consecutive_eps_beats": consecutive_beats(earnings_history),
+        "recent_quarters": recent,
+    }
 
     prompt = _USER_PROMPT.format(
         ticker=thesis["ticker"],
         assumptions=json.dumps(assumptions, indent=2),
         profile=json.dumps(profile_summary, indent=2),
-        earnings=json.dumps(earnings_summary, indent=2),
+        earnings=json.dumps(earnings_data, indent=2),
     )
 
     raw = None
     try:
-        client = anthropic.Anthropic()
-        msg = client.messages.create(
+        msg = _claude.create_message(
             model=cfg.model,
             max_tokens=1024,
             system=_SYSTEM_PROMPT,
@@ -128,7 +141,7 @@ def check_all(db, cfg) -> list[dict]:
     for thesis in active:
         ticker = thesis["ticker"]
         profile = db.get_latest_profile(ticker)
-        earnings = db.get_earnings_history(ticker, n=2)
+        earnings = db.get_earnings_history(ticker, n=4)
 
         result = check_thesis(thesis, profile, earnings, cfg)
         if result is None:

@@ -14,9 +14,9 @@ from typing import Optional
 
 import anthropic
 
-logger = logging.getLogger(__name__)
+from analysis import _claude
 
-_client: Optional[anthropic.Anthropic] = None
+logger = logging.getLogger(__name__)
 
 _SYSTEM_PROMPT = (
     "You are a financial news classifier. Respond ONLY with a valid JSON object, "
@@ -37,13 +37,6 @@ Respond with exactly:
 }}"""
 
 
-def _get_client() -> anthropic.Anthropic:
-    global _client
-    if _client is None:
-        _client = anthropic.Anthropic()
-    return _client
-
-
 def classify_headline(ticker: str, headline: str, cfg) -> Optional[dict]:
     """
     Send a headline to Claude and return a classification dict.
@@ -51,7 +44,7 @@ def classify_headline(ticker: str, headline: str, cfg) -> Optional[dict]:
     """
     prompt = _USER_PROMPT.format(ticker=ticker, headline=headline)
     try:
-        msg = _get_client().messages.create(
+        msg = _claude.create_message(
             model=cfg.model,
             max_tokens=cfg.max_tokens,
             system=_SYSTEM_PROMPT,

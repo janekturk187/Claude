@@ -12,6 +12,8 @@ import logging
 import os
 from datetime import datetime, timezone
 
+from analysis.earnings_scorer import consecutive_beats
+
 logger = logging.getLogger(__name__)
 
 
@@ -49,20 +51,22 @@ def generate(db, tickers: list, output_dir: str) -> str:
 
     # --- Earnings Quality Trends ---
     lines.append("## Earnings Quality Trends\n")
-    lines.append("| Ticker | Latest Score | Trend | EPS Beat | Guidance |")
-    lines.append("|--------|-------------|-------|----------|----------|")
+    lines.append("| Ticker | Latest Score | Trend | EPS Beat | Guidance | Beat Streak |")
+    lines.append("|--------|-------------|-------|----------|----------|-------------|")
     for ticker in tickers:
-        history = db.get_earnings_history(ticker, n=1)
+        history = db.get_earnings_history(ticker, n=4)
         if history:
             e = history[0]
+            streak = consecutive_beats(history)
             lines.append(
                 f"| {ticker} | {e.get('quality_score', 'n/a')} "
                 f"| {e.get('trend', 'n/a')} "
                 f"| {'✓' if e.get('eps_beat') else '✗'} "
-                f"| {e.get('guidance_dir', 'n/a')} |"
+                f"| {e.get('guidance_dir', 'n/a')} "
+                f"| {streak}Q |"
             )
         else:
-            lines.append(f"| {ticker} | — | — | — | — |")
+            lines.append(f"| {ticker} | — | — | — | — | — |")
     lines.append("")
 
     # --- Company Profile Scores ---

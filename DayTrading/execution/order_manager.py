@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 class OrderManager:
     def __init__(self, cfg):
         self._cfg = cfg
-        self._client = TradingClient(
+        self.client = TradingClient(
             cfg.alpaca.api_key,
             cfg.alpaca.secret_key,
             paper=cfg.alpaca.paper,
@@ -26,7 +26,7 @@ class OrderManager:
 
     def _account_equity(self) -> Optional[float]:
         try:
-            return float(self._client.get_account().equity)
+            return float(self.client.get_account().equity)
         except Exception as e:
             logger.error("Could not fetch account equity: %s", e)
             return None
@@ -86,7 +86,7 @@ class OrderManager:
         )
 
         try:
-            order = self._client.submit_order(
+            order = self.client.submit_order(
                 LimitOrderRequest(
                     symbol=ticker,
                     qty=qty,
@@ -109,7 +109,7 @@ class OrderManager:
     def cancel_all_open(self):
         """Cancel all open day orders — called at end of trading session."""
         try:
-            self._client.cancel_orders()
+            self.client.cancel_orders()
             logger.info("All open orders cancelled")
         except Exception as e:
             logger.error("Failed to cancel open orders: %s", e)

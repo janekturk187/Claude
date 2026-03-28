@@ -9,7 +9,7 @@ on each bar close.
 
 import logging
 import threading
-from collections import defaultdict
+from collections import defaultdict, deque
 from datetime import datetime, timezone
 from typing import Callable, Optional
 
@@ -18,31 +18,31 @@ from alpaca.data.models import Bar
 
 logger = logging.getLogger(__name__)
 
+_MAX_BARS = 390  # one full trading day at 1-min resolution
+
 
 class BarAggregator:
     """Aggregates a stream of 1-minute bars into higher resolutions in memory."""
 
     def __init__(self):
-        # {ticker: [Bar, ...]}  — rolling window of recent 1-min bars
-        self._bars: dict[str, list] = defaultdict(list)
+        # {ticker: deque(maxlen=390)} — O(1) append and auto-eviction
+        self._bars: dict[str, deque] = defaultdict(lambda: deque(maxlen=_MAX_BARS))
         self._lock = threading.Lock()
 
     def add(self, ticker: str, bar: dict):
         """Add a completed 1-minute bar."""
         with self._lock:
             self._bars[ticker].append(bar)
-            # Keep last 390 bars (one full trading day at 1-min resolution)
-            if len(self._bars[ticker]) > 390:
-                self._bars[ticker].pop(0)
 
     def get_bars(self, ticker: str, n: int = 20) -> list:
         with self._lock:
-            return list(self._bars[ticker][-n:])
+            bars = self._bars[ticker]
+            return list(bars)[-n:] if len(bars) >= n else list(bars)
 
     def build_5min_bar(self, ticker: str) -> Optional[dict]:
         """Aggregate the last 5 one-minute bars into a single 5-minute bar."""
         with self._lock:
-            recent = self._bars[ticker][-5:]
+            recent = list(self._bars[ticker])[-5:]
         if len(recent) < 5:
             return None
         return {

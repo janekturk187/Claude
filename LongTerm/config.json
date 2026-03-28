@@ -9,6 +9,9 @@
   "fred": {
     "api_key": "YOUR_FRED_API_KEY"
   },
+  "sec": {
+    "user_agent": "YourName/LongTermAnalysis contact@example.com"
+  },
   "watchlist": {
     "tickers": ["AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "TSLA"]
   },

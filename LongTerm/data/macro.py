@@ -10,8 +10,9 @@ Indicators fetched:
 """
 
 import logging
-import requests
 from typing import Optional
+
+from data import _http
 
 logger = logging.getLogger(__name__)
 
@@ -26,34 +27,10 @@ _INDICATORS = {
 }
 
 
-def _fetch_latest(series_id: str, api_key: str) -> Optional[float]:
+def _fetch_indicator(series_id: str, api_key: str) -> tuple[Optional[float], Optional[str]]:
+    """Fetch latest value and direction in a single API call."""
     try:
-        resp = requests.get(
-            _FRED_BASE,
-            params={
-                "series_id":    series_id,
-                "api_key":      api_key,
-                "file_type":    "json",
-                "sort_order":   "desc",
-                "limit":        2,
-            },
-            timeout=10,
-        )
-        resp.raise_for_status()
-        observations = resp.json().get("observations", [])
-        for obs in observations:
-            val = obs.get("value")
-            if val and val != ".":
-                return float(val)
-    except Exception as e:
-        logger.error("FRED fetch failed for %s: %s", series_id, e)
-    return None
-
-
-def _direction(series_id: str, api_key: str) -> Optional[str]:
-    """Compare the last two observations to determine trend direction."""
-    try:
-        resp = requests.get(
+        resp = _http.get_with_retry(
             _FRED_BASE,
             params={
                 "series_id":  series_id,
@@ -69,15 +46,22 @@ def _direction(series_id: str, api_key: str) -> Optional[str]:
             float(o["value"]) for o in resp.json().get("observations", [])
             if o.get("value") and o["value"] != "."
         ]
+        if not obs:
+            return None, None
+        value = obs[0]
         if len(obs) >= 2:
             if obs[0] > obs[1]:
-                return "rising"
+                direction = "rising"
             elif obs[0] < obs[1]:
-                return "falling"
-            return "flat"
-    except Exception:
-        pass
-    return None
+                direction = "falling"
+            else:
+                direction = "flat"
+        else:
+            direction = None
+        return value, direction
+    except Exception as e:
+        logger.error("FRED fetch failed for %s: %s", series_id, e)
+    return None, None
 
 
 def fetch_all(api_key: str) -> list[dict]:
@@ -87,8 +71,7 @@ def fetch_all(api_key: str) -> list[dict]:
     """
     snapshots = []
     for name, series_id in _INDICATORS.items():
-        value = _fetch_latest(series_id, api_key)
-        direction = _direction(series_id, api_key)
+        value, direction = _fetch_indicator(series_id, api_key)
         snapshots.append({
             "indicator": name,
             "value":     value,

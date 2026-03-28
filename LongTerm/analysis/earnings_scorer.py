@@ -9,6 +9,8 @@ from typing import Optional
 
 import anthropic
 
+from analysis import _claude
+
 logger = logging.getLogger(__name__)
 
 _SYSTEM_PROMPT = (
@@ -63,8 +65,7 @@ def score(ticker: str, period: str, financials: list, surprises: list,
 
     raw = None
     try:
-        client = anthropic.Anthropic()
-        msg = client.messages.create(
+        msg = _claude.create_message(
             model=cfg.model,
             max_tokens=512,
             system=_SYSTEM_PROMPT,

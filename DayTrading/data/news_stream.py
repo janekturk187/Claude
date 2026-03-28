@@ -69,23 +69,34 @@ class NewsStream:
         logger.error("Polygon websocket error: %s", error)
 
     def _on_close(self, ws, code, msg):
-        logger.warning("Polygon websocket closed (code=%s) — will reconnect", code)
-        if not self._stop.is_set():
-            time.sleep(5)
-            self.start()
+        # Reconnect is handled by _run_with_reconnect — do not call start() here
+        # to avoid spawning a new thread on every disconnect.
+        logger.warning("Polygon websocket closed (code=%s)", code)
+
+    def _run_with_reconnect(self):
+        """Single background thread that reconnects with exponential backoff."""
+        backoff = 5
+        while not self._stop.is_set():
+            try:
+                self._ws = websocket.WebSocketApp(
+                    _POLYGON_NEWS_URL,
+                    on_open=self._on_open,
+                    on_message=self._on_message,
+                    on_error=self._on_error,
+                    on_close=self._on_close,
+                )
+                self._ws.run_forever()
+            except Exception as e:
+                logger.error("WebSocket run error: %s", e)
+
+            if not self._stop.is_set():
+                logger.info("Reconnecting in %ds...", backoff)
+                self._stop.wait(timeout=backoff)
+                backoff = min(backoff * 2, 60)
 
     def start(self):
         self._stop.clear()
-        self._ws = websocket.WebSocketApp(
-            _POLYGON_NEWS_URL,
-            on_open=self._on_open,
-            on_message=self._on_message,
-            on_error=self._on_error,
-            on_close=self._on_close,
-        )
-        self._thread = threading.Thread(
-            target=self._ws.run_forever, daemon=True
-        )
+        self._thread = threading.Thread(target=self._run_with_reconnect, daemon=True)
         self._thread.start()
         logger.info("News stream started")
 

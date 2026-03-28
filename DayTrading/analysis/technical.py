@@ -62,7 +62,7 @@ def find_structure_break(bars: list, lookback: int = 10) -> dict:
             "breakdown_low": bool,
             "local_high": float,
             "local_low": float,
-            "breakout_bar_high": float,
+            "breakout_bar_low": float,
         }
     """
     if len(bars) < lookback + 1:

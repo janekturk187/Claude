@@ -12,7 +12,7 @@ class Storage:
         self._init_db()
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, check_same_thread=False)
         conn.row_factory = sqlite3.Row
         return conn
 
@@ -151,11 +151,24 @@ class Storage:
                 (datetime.now(timezone.utc).isoformat(), reason, thesis_id),
             )
 
-    def save_macro(self, indicator: str, value: float, direction: str):
+    def save_macro(self, indicator: str, value: float, direction: str, keep_last: int = 90):
         with self._connect() as conn:
             conn.execute(
                 "INSERT INTO macro_snapshots (indicator, value, direction, snapped_at) VALUES (?, ?, ?, ?)",
                 (indicator, value, direction, datetime.now(timezone.utc).isoformat()),
+            )
+            # Prune old rows to prevent unbounded table growth
+            conn.execute(
+                """
+                DELETE FROM macro_snapshots
+                WHERE indicator = ? AND id NOT IN (
+                    SELECT id FROM macro_snapshots
+                    WHERE indicator = ?
+                    ORDER BY snapped_at DESC
+                    LIMIT ?
+                )
+                """,
+                (indicator, indicator, keep_last),
             )
 
     def save_financials(self, ticker: str, period: str, data: dict):
@@ -176,10 +189,36 @@ class Storage:
                 ),
             )
 
+    def has_company_profile(self, ticker: str, filing_type: str, period: str) -> bool:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM company_profiles WHERE ticker=? AND filing_type=? AND period=?",
+                (ticker, filing_type, period),
+            ).fetchone()
+            return row is not None
+
+    def has_earnings_score(self, ticker: str, period: str) -> bool:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM earnings_scores WHERE ticker=? AND period=?",
+                (ticker, period),
+            ).fetchone()
+            return row is not None
+
+    def has_financials(self, ticker: str, period: str) -> bool:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM financials WHERE ticker=? AND period=?",
+                (ticker, period),
+            ).fetchone()
+            return row is not None
+
     def get_active_theses(self) -> list:
+        # Include 'flagged' theses — they are still open positions that need attention.
+        # Closing a thesis requires explicitly setting status='closed'.
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT * FROM thesis_log WHERE status = 'active'"
+                "SELECT * FROM thesis_log WHERE status IN ('active', 'flagged')"
             ).fetchall()
             return [dict(r) for r in rows]
 
