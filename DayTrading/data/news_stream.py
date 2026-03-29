@@ -7,6 +7,7 @@ watched tickers, and fires the on_headline callback with each match.
 
 import json
 import logging
+import queue
 import threading
 import time
 from typing import Callable
@@ -31,6 +32,8 @@ class NewsStream:
         self._on_headline = on_headline
         self._ws: websocket.WebSocketApp | None = None
         self._thread: threading.Thread | None = None
+        self._worker: threading.Thread | None = None
+        self._queue: queue.Queue = queue.Queue()
         self._stop = threading.Event()
 
     def _on_open(self, ws):
@@ -40,7 +43,8 @@ class NewsStream:
     def _on_message(self, ws, message: str):
         try:
             events = json.loads(message)
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as e:
+            logger.warning("Failed to parse Polygon message: %s", e)
             return
 
         for event in events:
@@ -60,10 +64,23 @@ class NewsStream:
         for ticker in self._tickers:
             if ticker in tickers_in_article:
                 logger.debug("News hit for %s: %s", ticker, headline[:80])
+                self._queue.put((ticker, headline))
+
+    def _process_queue(self):
+        """Background worker: drains the headline queue and fires callbacks.
+        Runs in its own thread so websocket message handling is never blocked
+        by the Claude API call inside on_headline."""
+        while not self._stop.is_set() or not self._queue.empty():
+            try:
+                ticker, headline = self._queue.get(timeout=1)
                 try:
                     self._on_headline(ticker, headline)
                 except Exception as e:
                     logger.warning("on_headline callback error for %s: %s", ticker, e)
+                finally:
+                    self._queue.task_done()
+            except queue.Empty:
+                continue
 
     def _on_error(self, ws, error):
         logger.error("Polygon websocket error: %s", error)
@@ -74,9 +91,11 @@ class NewsStream:
         logger.warning("Polygon websocket closed (code=%s)", code)
 
     def _run_with_reconnect(self):
-        """Single background thread that reconnects with exponential backoff."""
+        """Single background thread that reconnects with exponential backoff.
+        Backoff resets if the connection stays up for at least 60 seconds."""
         backoff = 5
         while not self._stop.is_set():
+            connected_at = time.monotonic()
             try:
                 self._ws = websocket.WebSocketApp(
                     _POLYGON_NEWS_URL,
@@ -90,12 +109,16 @@ class NewsStream:
                 logger.error("WebSocket run error: %s", e)
 
             if not self._stop.is_set():
+                if time.monotonic() - connected_at > 60:
+                    backoff = 5  # reset after a stable connection
                 logger.info("Reconnecting in %ds...", backoff)
                 self._stop.wait(timeout=backoff)
                 backoff = min(backoff * 2, 60)
 
     def start(self):
         self._stop.clear()
+        self._worker = threading.Thread(target=self._process_queue, daemon=True)
+        self._worker.start()
         self._thread = threading.Thread(target=self._run_with_reconnect, daemon=True)
         self._thread.start()
         logger.info("News stream started")

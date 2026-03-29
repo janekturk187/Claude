@@ -82,6 +82,18 @@ class Storage:
                     fetched_at      TEXT NOT NULL,
                     UNIQUE(ticker, period)
                 );
+
+                CREATE INDEX IF NOT EXISTS idx_company_profiles_ticker
+                    ON company_profiles(ticker);
+
+                CREATE INDEX IF NOT EXISTS idx_earnings_scores_ticker
+                    ON earnings_scores(ticker);
+
+                CREATE INDEX IF NOT EXISTS idx_thesis_log_status
+                    ON thesis_log(status);
+
+                CREATE INDEX IF NOT EXISTS idx_financials_ticker
+                    ON financials(ticker);
             """)
 
     def save_company_profile(self, ticker: str, filing_type: str, period: str, analysis: dict):

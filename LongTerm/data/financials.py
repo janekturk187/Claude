@@ -118,6 +118,6 @@ def get_earnings_surprises(ticker: str, api_key: str, quarters: int = 4) -> list
             "actual_eps":         actual,
             "estimated_eps":      estimated,
             "surprise_pct":       surprise,
-            "beat":               actual > estimated if (actual and estimated) else None,
+            "beat":               (actual > estimated) if (actual is not None and estimated is not None) else None,
         })
     return results

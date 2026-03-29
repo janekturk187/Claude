@@ -1,4 +1,5 @@
 import json
+import os
 from dataclasses import dataclass, field
 
 
@@ -69,9 +70,17 @@ def load_config(path: str = "config.json") -> Config:
     except json.JSONDecodeError as e:
         raise ValueError(f"Invalid JSON in '{path}': {e}")
 
+    alpaca_raw = d["alpaca"]
     cfg = Config(
-        alpaca=AlpacaConfig(**d["alpaca"]),
-        polygon=PolygonConfig(**d["polygon"]),
+        alpaca=AlpacaConfig(
+            api_key=os.environ.get("ALPACA_API_KEY") or alpaca_raw["api_key"],
+            secret_key=os.environ.get("ALPACA_SECRET_KEY") or alpaca_raw["secret_key"],
+            paper=alpaca_raw["paper"],
+            base_url=alpaca_raw["base_url"],
+        ),
+        polygon=PolygonConfig(
+            api_key=os.environ.get("POLYGON_API_KEY") or d["polygon"]["api_key"],
+        ),
         claude=ClaudeConfig(**d["claude"]),
         tickers=d["watchlist"]["tickers"],
         risk=RiskConfig(**d["risk"]),

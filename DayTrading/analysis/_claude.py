@@ -8,6 +8,7 @@ a sentiment signal — retry is cheap insurance.
 """
 
 import logging
+import random
 import time
 from typing import Optional
 
@@ -38,9 +39,9 @@ def create_message(*, max_retries: int = 3, **kwargs) -> anthropic.types.Message
             return get_client().messages.create(**kwargs)
         except anthropic.RateLimitError:
             if attempt < max_retries - 1:
-                wait = 5 * (2 ** attempt)  # 5s, 10s
+                wait = 5 * (2 ** attempt) * random.uniform(0.8, 1.2)  # 5s, 10s + jitter
                 logger.warning(
-                    "Claude rate limit — retry %d/%d in %ds",
+                    "Claude rate limit — retry %d/%d in %.1fs",
                     attempt + 1, max_retries - 1, wait,
                 )
                 time.sleep(wait)
@@ -48,12 +49,11 @@ def create_message(*, max_retries: int = 3, **kwargs) -> anthropic.types.Message
             raise
         except anthropic.InternalServerError:
             if attempt < max_retries - 1:
-                wait = 2 ** attempt  # 1s, 2s
+                wait = (2 ** attempt) * random.uniform(0.8, 1.2)  # 1s, 2s + jitter
                 logger.warning(
-                    "Claude server error — retry %d/%d in %ds",
+                    "Claude server error — retry %d/%d in %.1fs",
                     attempt + 1, max_retries - 1, wait,
                 )
                 time.sleep(wait)
                 continue
             raise
-    raise RuntimeError(f"create_message: exhausted {max_retries} retries")

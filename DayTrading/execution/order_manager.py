@@ -99,8 +99,16 @@ class OrderManager:
                 )
             )
             logger.info("Order submitted: %s", order.id)
-            trade_id = db.open_trade(ticker, direction, entry, stop, target, qty)
-            return trade_id
+            try:
+                trade_id = db.open_trade(ticker, direction, entry, stop, target, qty)
+                return trade_id
+            except Exception as db_err:
+                logger.error(
+                    "Order %s submitted but failed to record in DB: %s"
+                    " — manual reconciliation required",
+                    order.id, db_err,
+                )
+                return None
 
         except Exception as e:
             logger.error("Order submission failed for %s: %s", ticker, e)

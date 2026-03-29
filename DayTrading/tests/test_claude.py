@@ -37,7 +37,8 @@ def test_retries_on_internal_server_error(mock_get_client, mock_sleep):
                             messages=[{"role": "user", "content": "hi"}], max_retries=2)
     assert result is not None
     assert client.messages.create.call_count == 2
-    mock_sleep.assert_called_once_with(1)
+    mock_sleep.assert_called_once()
+    assert 0.8 <= mock_sleep.call_args[0][0] <= 1.2  # base=1s ±20% jitter
 
 
 @patch("analysis._claude.time.sleep")
@@ -53,7 +54,8 @@ def test_retries_on_rate_limit(mock_get_client, mock_sleep):
     result = create_message(model="claude-haiku-4-5-20251001", max_tokens=256,
                             messages=[{"role": "user", "content": "hi"}], max_retries=2)
     assert result is not None
-    mock_sleep.assert_called_once_with(5)
+    mock_sleep.assert_called_once()
+    assert 4.0 <= mock_sleep.call_args[0][0] <= 6.0  # base=5s ±20% jitter
 
 
 @patch("analysis._claude.time.sleep")

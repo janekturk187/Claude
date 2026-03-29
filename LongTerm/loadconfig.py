@@ -1,6 +1,6 @@
 import json
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass
@@ -63,8 +63,8 @@ def load_config(path: str = "config.json") -> Config:
 
     cfg = Config(
         claude=ClaudeConfig(**d["claude"]),
-        fmp=FMPConfig(**d["fmp"]),
-        fred=FREDConfig(**d["fred"]),
+        fmp=FMPConfig(api_key=os.environ.get("FMP_API_KEY") or d["fmp"]["api_key"]),
+        fred=FREDConfig(api_key=os.environ.get("FRED_API_KEY") or d["fred"]["api_key"]),
         sec=SecConfig(**d.get("sec", {"user_agent": "LongTermAnalysis contact@example.com"})),
         tickers=d["watchlist"]["tickers"],
         analysis=AnalysisConfig(**d["analysis"]),

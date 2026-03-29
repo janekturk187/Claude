@@ -17,6 +17,7 @@ Usage:
 
 import argparse
 import logging
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -30,6 +31,18 @@ from portfolio import thesis_monitor
 from reports import weekly_report
 
 logger = logging.getLogger(__name__)
+
+# Per-ticker locks prevent the thread pool from analyzing the same ticker
+# concurrently when the same ticker appears in multiple scheduled cycles.
+_ticker_locks: dict[str, threading.Lock] = {}
+_ticker_locks_guard = threading.Lock()
+
+
+def _get_ticker_lock(ticker: str) -> threading.Lock:
+    with _ticker_locks_guard:
+        if ticker not in _ticker_locks:
+            _ticker_locks[ticker] = threading.Lock()
+        return _ticker_locks[ticker]
 
 
 def run_filing_analysis(ticker: str, db: Storage, cfg, force: bool = False):
@@ -132,9 +145,16 @@ def full_cycle(db: Storage, cfg, tickers: list, force: bool = False):
     run_macro_refresh(db, cfg)
 
     def _analyze(ticker: str):
-        logger.info("--- Analyzing %s ---", ticker)
-        run_filing_analysis(ticker, db, cfg, force=force)
-        run_earnings_analysis(ticker, db, cfg, force=force)
+        lock = _get_ticker_lock(ticker)
+        if not lock.acquire(blocking=False):
+            logger.warning("Skipping %s — analysis already in progress", ticker)
+            return
+        try:
+            logger.info("--- Analyzing %s ---", ticker)
+            run_filing_analysis(ticker, db, cfg, force=force)
+            run_earnings_analysis(ticker, db, cfg, force=force)
+        finally:
+            lock.release()
 
     with ThreadPoolExecutor(max_workers=4) as pool:
         futures = {pool.submit(_analyze, t): t for t in tickers}

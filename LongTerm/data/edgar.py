@@ -26,6 +26,23 @@ _HEADERS = {"User-Agent": "LongTermAnalysis contact@example.com"}
 _TICKER_MAP: dict[str, str] = {}
 _TICKER_MAP_LOCK = threading.Lock()
 
+# SEC rate limit: 10 requests/sec. Enforce a minimum interval across all
+# threads so parallel workers can't collectively exceed the limit.
+_RATE_LOCK = threading.Lock()
+_LAST_REQUEST_TIME: float = 0.0
+_MIN_REQUEST_INTERVAL = 0.11  # ~9 req/s — safely under the 10 req/s limit
+
+
+def _rate_limited_get(url: str, **kwargs):
+    """Wrapper around _http.get_with_retry that enforces the SEC rate limit."""
+    global _LAST_REQUEST_TIME
+    with _RATE_LOCK:
+        wait = _MIN_REQUEST_INTERVAL - (time.time() - _LAST_REQUEST_TIME)
+        if wait > 0:
+            time.sleep(wait)
+        _LAST_REQUEST_TIME = time.time()
+    return _http.get_with_retry(url, **kwargs)
+
 
 def set_user_agent(user_agent: str) -> None:
     """Set the User-Agent header for all EDGAR requests (call once at startup)."""
@@ -46,7 +63,7 @@ def _load_ticker_map() -> dict[str, str]:
         if _TICKER_MAP:  # re-check inside lock — another thread may have populated it
             return _TICKER_MAP
         try:
-            resp = _http.get_with_retry(
+            resp = _rate_limited_get(
                 "https://www.sec.gov/files/company_tickers.json",
                 headers=_HEADERS,
                 timeout=10,
@@ -80,7 +97,7 @@ def get_recent_filings(ticker: str, form_type: str = "10-K", count: int = 2) -> 
 
     try:
         url = f"{_EDGAR_BASE}/submissions/CIK{cik}.json"
-        resp = _http.get_with_retry(url, headers=_HEADERS, timeout=15)
+        resp = _rate_limited_get(url, headers=_HEADERS, timeout=15)
         data = resp.json()
 
         filings      = data.get("filings", {}).get("recent", {})
@@ -127,10 +144,9 @@ def fetch_filing_text(filing: dict, max_chars: int = 30000) -> Optional[str]:
         return None
 
     try:
-        resp = _http.get_with_retry(text_url, headers=_HEADERS, timeout=30)
+        resp = _rate_limited_get(text_url, headers=_HEADERS, timeout=30)
         text = resp.text[:max_chars]
         logger.debug("Fetched filing %s (%d chars)", filing["accession_number"], len(text))
-        time.sleep(0.1)  # SEC rate limit: 10 requests/sec max
         return text
     except Exception as e:
         logger.error("Failed to fetch filing text for %s: %s", filing["accession_number"], e)

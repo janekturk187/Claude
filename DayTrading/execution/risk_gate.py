@@ -43,14 +43,16 @@ def check(signal: dict, db, cfg, last_news_time: dict,
 
     if now < start or now > end:
         return False, f"outside trading hours ({now.strftime('%H:%M')})"
-    if pause_s <= now <= pause_e:
+    if pause_s <= now < pause_e:
         return False, f"midday pause ({now.strftime('%H:%M')})"
 
-    # 2. Daily loss limit
+    # 2. Daily loss limit — includes unrealized losses on open positions
     daily_pnl = db.get_daily_pnl()
     account_equity = _get_account_equity(alpaca_client) if alpaca_client else None
-    if account_equity and daily_pnl < -(account_equity * cfg.risk.max_daily_loss_pct):
-        return False, f"daily loss limit hit (P&L: ${daily_pnl:.2f})"
+    unrealized_pnl = _get_unrealized_pnl(alpaca_client) if alpaca_client else 0.0
+    total_pnl = daily_pnl + unrealized_pnl
+    if account_equity and total_pnl < -(account_equity * cfg.risk.max_daily_loss_pct):
+        return False, f"daily loss limit hit (P&L: ${total_pnl:.2f})"
 
     # 3. Max concurrent positions
     open_trades = db.get_open_trades()
@@ -81,3 +83,13 @@ def _get_account_equity(alpaca_client) -> float | None:
     except Exception as e:
         logger.warning("Could not fetch account equity: %s", e)
         return None
+
+
+def _get_unrealized_pnl(alpaca_client) -> float:
+    """Sum unrealized P&L across all open positions."""
+    try:
+        positions = alpaca_client.get_all_positions()
+        return sum(float(p.unrealized_pl) for p in positions)
+    except Exception as e:
+        logger.warning("Could not fetch unrealized P&L: %s", e)
+        return 0.0
