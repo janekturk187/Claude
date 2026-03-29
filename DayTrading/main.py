@@ -35,6 +35,22 @@ logger = logging.getLogger(__name__)
 # Monotonic timestamp of the last headline received per ticker
 _last_news_time: dict[str, float] = {}
 
+# Monotonic timestamp of the last bar received per ticker — used for health checks
+_last_bar_time: dict[str, float] = {}
+_STALE_BAR_SECONDS = 5 * 60  # warn if no bar in 5 minutes
+
+
+def _check_stream_health(tickers: list) -> None:
+    """Warn if any watched ticker has gone stale mid-session."""
+    threshold = time.monotonic() - _STALE_BAR_SECONDS
+    for ticker in tickers:
+        last = _last_bar_time.get(ticker)
+        if last is not None and last < threshold:
+            logger.warning(
+                "HEALTH: %s — no bar received in >%dm, price stream may be stale",
+                ticker, _STALE_BAR_SECONDS // 60,
+            )
+
 
 def run():
     cfg = load_config("config.json")
@@ -70,6 +86,7 @@ def run():
     # --- Price bar handler ---
     def on_bar(bar: dict):
         ticker = bar["ticker"]
+        _last_bar_time[ticker] = time.monotonic()
 
         # Persist bar
         db.save_bar(
@@ -129,10 +146,11 @@ def run():
 
     logger.info("Day trading system running. Watching: %s", cfg.tickers)
 
-    # Keep main thread alive
+    # Keep main thread alive — check stream health each minute
     while True:
         time.sleep(60)
         logger.debug("Heartbeat — session running")
+        _check_stream_health(cfg.tickers)
 
 
 if __name__ == "__main__":

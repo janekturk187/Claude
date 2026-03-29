@@ -87,14 +87,10 @@ def _validate(cfg: Config) -> None:
         errors.append("fred.api_key is not set — get a free key at fred.stlouisfed.org/docs/api")
     if not cfg.tickers:
         errors.append("watchlist.tickers cannot be empty")
+    if "contact@example.com" in cfg.sec.user_agent or "YourName" in cfg.sec.user_agent:
+        errors.append(
+            f"sec.user_agent is still the placeholder value ('{cfg.sec.user_agent}'). "
+            "The SEC requires a real name and contact email — update config.json."
+        )
     if errors:
         raise ValueError("Config validation failed:\n" + "\n".join(f"  - {e}" for e in errors))
-
-    import logging as _logging
-    _log = _logging.getLogger(__name__)
-    if "contact@example.com" in cfg.sec.user_agent or "YourName" in cfg.sec.user_agent:
-        _log.warning(
-            "sec.user_agent appears to be the placeholder value ('%s'). "
-            "The SEC requires a real contact email — update config.json.",
-            cfg.sec.user_agent,
-        )

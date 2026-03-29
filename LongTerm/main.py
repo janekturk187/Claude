@@ -156,6 +156,7 @@ def full_cycle(db: Storage, cfg, tickers: list, force: bool = False):
         finally:
             lock.release()
 
+    failed = []
     with ThreadPoolExecutor(max_workers=4) as pool:
         futures = {pool.submit(_analyze, t): t for t in tickers}
         for future in as_completed(futures):
@@ -163,6 +164,15 @@ def full_cycle(db: Storage, cfg, tickers: list, force: bool = False):
             exc = future.exception()
             if exc:
                 logger.error("Cycle failed for %s: %s", ticker, exc)
+                failed.append(ticker)
+
+    if failed:
+        logger.warning(
+            "Cycle finished with errors — %d/%d tickers failed: %s",
+            len(failed), len(tickers), failed,
+        )
+    else:
+        logger.info("Cycle finished — all %d tickers completed successfully", len(tickers))
 
     run_thesis_check(db, cfg)
     logger.info("Full cycle complete")
