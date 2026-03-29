@@ -100,7 +100,7 @@ def evaluate(ticker: str, technical: dict, sentiment_score: Optional[float],
         return None
 
     strength = _strength(technical, sentiment_score, sentiment_delta, direction, cfg)
-    if strength == "none":
+    if strength in ("none", "weak"):
         return None
 
     signal = {

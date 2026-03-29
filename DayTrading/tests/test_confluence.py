@@ -2,7 +2,7 @@
 
 import pytest
 from unittest.mock import MagicMock
-from signal.confluence import evaluate, _strength
+from signals.confluence import evaluate, _strength
 
 
 def _cfg(min_sentiment=7, min_rvol=1.5):

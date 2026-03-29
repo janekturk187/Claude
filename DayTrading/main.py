@@ -26,7 +26,7 @@ from data.price_stream import PriceStream
 from data.news_stream import NewsStream
 from analysis import technical as tech
 from analysis.sentiment import classify_headline, SessionSentiment
-from signal.confluence import evaluate as evaluate_signal
+from signals.confluence import evaluate as evaluate_signal
 from execution.risk_gate import check as risk_check
 from execution.order_manager import OrderManager
 

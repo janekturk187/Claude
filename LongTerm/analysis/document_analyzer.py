@@ -114,11 +114,10 @@ def analyze_filing(ticker: str, filing_type: str, period: str,
 def _validate_profile(result: dict):
     """Normalize and clamp fields in place."""
     score = result.get("thesis_score")
-    if score is not None:
-        try:
-            result["thesis_score"] = max(1, min(10, int(score)))
-        except (TypeError, ValueError):
-            result["thesis_score"] = 5
+    try:
+        result["thesis_score"] = max(1, min(10, int(score)))
+    except (TypeError, ValueError):
+        result["thesis_score"] = 5
 
     valid_trends = {"growing", "stable", "declining"}
     if result.get("revenue_trend") not in valid_trends:
