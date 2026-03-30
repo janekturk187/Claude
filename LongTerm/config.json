@@ -28,6 +28,15 @@
   "database": {
     "path": "longterm.db"
   },
+  "alerts": {
+    "email": {
+      "enabled": false,
+      "smtp_host": "smtp.gmail.com",
+      "smtp_port": 587,
+      "from_addr": "your@gmail.com",
+      "to_addr": "your@gmail.com"
+    }
+  },
   "reports": {
     "output_dir": "reports_output"
   },

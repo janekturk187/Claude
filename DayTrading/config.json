@@ -1,12 +1,12 @@
 {
   "alpaca": {
-    "api_key": "YOUR_ALPACA_API_KEY",
-    "secret_key": "YOUR_ALPACA_SECRET_KEY",
+    "api_key": "PKXWWXBK6XPTOWVTZMS45U2NO4",
+    "secret_key": "4KEcWpfssfM6p3AA5UUNvmLRYHpEGdBS63wox3mAnPbQ",
     "paper": true,
     "base_url": "https://paper-api.alpaca.markets"
   },
   "polygon": {
-    "api_key": "YOUR_POLYGON_API_KEY"
+    "api_key": "SKKjvBoMwlrPtvQu97FhdqDlDFj_w2tG"
   },
   "claude": {
     "model": "claude-haiku-4-5-20251001",
@@ -37,6 +37,30 @@
   },
   "database": {
     "path": "daytrading.db"
+  },
+  "reports": {
+    "output_dir": "reports_output"
+  },
+  "screening": {
+    "use_dynamic_universe": true,
+    "dynamic_top": 50,
+    "universe": [
+      "AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "META", "GOOGL", "AMD",
+      "NFLX", "ORCL", "CRM", "ADBE", "INTC", "QCOM", "MU",
+      "SPY", "QQQ", "IWM",
+      "JPM", "GS", "BAC", "MS", "C",
+      "XOM", "CVX", "OXY",
+      "UNH", "JNJ", "PFE", "MRNA",
+      "PLTR", "HOOD", "COIN", "RBLX", "SNAP"
+    ],
+    "max_picks": 5,
+    "min_gap_pct": 2.0,
+    "min_avg_daily_volume": 500000,
+    "min_price": 5.0,
+    "max_price": 500.0,
+    "min_rvol": 0.0,
+    "max_per_sector": 2,
+    "news_catalyst_check": true
   },
   "log_level": "INFO"
 }

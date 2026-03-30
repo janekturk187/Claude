@@ -84,7 +84,7 @@ def get_balance_sheet(ticker: str, api_key: str, quarters: int = 4) -> list[dict
 
 
 def get_key_metrics(ticker: str, api_key: str) -> Optional[dict]:
-    """Returns current key metrics: ROE, ROIC, P/E, P/FCF."""
+    """Returns current key metrics: ROE, ROIC, P/E, PEG, P/FCF, EV/EBITDA."""
     data = _get(f"key-metrics-ttm/{ticker}", api_key)
     if not data:
         return None
@@ -93,8 +93,22 @@ def get_key_metrics(ticker: str, api_key: str) -> Optional[dict]:
         "roe":       item.get("roeTTM"),
         "roic":      item.get("roicTTM"),
         "pe_ratio":  item.get("peRatioTTM"),
+        "peg_ratio": item.get("pegRatioTTM"),
         "pfcf":      item.get("pfcfRatioTTM"),
         "ev_ebitda": item.get("enterpriseValueOverEBITDATTM"),
+    }
+
+
+def get_quote(ticker: str, api_key: str) -> Optional[dict]:
+    """Returns current quote: price, change %, and market cap."""
+    data = _get(f"quote/{ticker}", api_key)
+    if not data:
+        return None
+    item = data[0]
+    return {
+        "price":      item.get("price"),
+        "change_pct": item.get("changesPercentage"),
+        "market_cap": item.get("marketCap"),
     }
 
 

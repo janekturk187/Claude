@@ -32,6 +32,20 @@ class AnalysisConfig:
 
 
 @dataclass
+class EmailAlertConfig:
+    enabled: bool
+    smtp_host: str
+    smtp_port: int
+    from_addr: str
+    to_addr: str
+
+
+@dataclass
+class AlertsConfig:
+    email: EmailAlertConfig
+
+
+@dataclass
 class ScheduleConfig:
     earnings_check_interval_hours: int
     macro_refresh_interval_hours: int
@@ -47,6 +61,7 @@ class Config:
     tickers: list
     analysis: AnalysisConfig
     schedule: ScheduleConfig
+    alerts: AlertsConfig
     db_path: str
     reports_dir: str
     log_level: str
@@ -69,12 +84,26 @@ def load_config(path: str = "config.json") -> Config:
         tickers=d["watchlist"]["tickers"],
         analysis=AnalysisConfig(**d["analysis"]),
         schedule=ScheduleConfig(**d["schedule"]),
+        alerts=_load_alerts(d.get("alerts", {})),
         db_path=d["database"]["path"],
         reports_dir=d["reports"]["output_dir"],
         log_level=d.get("log_level", "INFO"),
     )
     _validate(cfg)
     return cfg
+
+
+def _load_alerts(d: dict) -> AlertsConfig:
+    email = d.get("email", {})
+    return AlertsConfig(
+        email=EmailAlertConfig(
+            enabled=email.get("enabled", False),
+            smtp_host=email.get("smtp_host", "smtp.gmail.com"),
+            smtp_port=email.get("smtp_port", 587),
+            from_addr=email.get("from_addr", ""),
+            to_addr=email.get("to_addr", ""),
+        )
+    )
 
 
 def _validate(cfg: Config) -> None:

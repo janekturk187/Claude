@@ -94,6 +94,42 @@ class Storage:
 
                 CREATE INDEX IF NOT EXISTS idx_financials_ticker
                     ON financials(ticker);
+
+                CREATE TABLE IF NOT EXISTS positions (
+                    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ticker        TEXT NOT NULL,
+                    thesis_id     INTEGER,
+                    entry_date    TEXT NOT NULL,
+                    entry_price   REAL NOT NULL,
+                    shares        REAL NOT NULL,
+                    status        TEXT DEFAULT 'open',
+                    exit_date     TEXT,
+                    exit_price    REAL,
+                    pnl           REAL,
+                    notes         TEXT
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_positions_ticker
+                    ON positions(ticker);
+                CREATE INDEX IF NOT EXISTS idx_positions_status
+                    ON positions(status);
+
+                CREATE TABLE IF NOT EXISTS valuations (
+                    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ticker            TEXT NOT NULL,
+                    period            TEXT NOT NULL,
+                    pe_ratio          REAL,
+                    peg_ratio         REAL,
+                    pfcf_ratio        REAL,
+                    ev_ebitda         REAL,
+                    valuation_grade   TEXT,
+                    valuation_summary TEXT,
+                    analyzed_at       TEXT NOT NULL,
+                    UNIQUE(ticker, period)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_valuations_ticker
+                    ON valuations(ticker);
             """)
 
     def save_company_profile(self, ticker: str, filing_type: str, period: str, analysis: dict):
@@ -249,6 +285,89 @@ class Storage:
                 (ticker, n),
             ).fetchall()
             return [dict(r) for r in rows]
+
+    def open_position(self, ticker: str, entry_price: float, shares: float,
+                      thesis_id: int = None, entry_date: str = None,
+                      notes: str = None) -> int:
+        if entry_date is None:
+            entry_date = datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO positions (ticker, thesis_id, entry_date, entry_price, shares, notes)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (ticker, thesis_id, entry_date, entry_price, shares, notes),
+            )
+            return cur.lastrowid
+
+    def close_position(self, position_id: int, exit_price: float,
+                       exit_date: str = None):
+        if exit_date is None:
+            exit_date = datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT entry_price, shares FROM positions WHERE id=?", (position_id,)
+            ).fetchone()
+            if row is None:
+                return
+            pnl = (exit_price - row["entry_price"]) * row["shares"]
+            conn.execute(
+                """
+                UPDATE positions
+                SET status='closed', exit_date=?, exit_price=?, pnl=?
+                WHERE id=?
+                """,
+                (exit_date, exit_price, round(pnl, 2), position_id),
+            )
+
+    def get_open_positions(self) -> list:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM positions WHERE status='open' ORDER BY entry_date"
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def get_position(self, position_id: int) -> dict | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM positions WHERE id=?", (position_id,)
+            ).fetchone()
+            return dict(row) if row else None
+
+    def save_valuation(self, ticker: str, period: str, data: dict):
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO valuations
+                    (ticker, period, pe_ratio, peg_ratio, pfcf_ratio, ev_ebitda,
+                     valuation_grade, valuation_summary, analyzed_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    ticker, period,
+                    data.get("pe_ratio"), data.get("peg_ratio"),
+                    data.get("pfcf_ratio"), data.get("ev_ebitda"),
+                    data.get("valuation_grade"), data.get("valuation_summary"),
+                    datetime.now(timezone.utc).isoformat(),
+                ),
+            )
+
+    def has_valuation(self, ticker: str, period: str) -> bool:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM valuations WHERE ticker=? AND period=?",
+                (ticker, period),
+            ).fetchone()
+            return row is not None
+
+    def get_latest_valuation(self, ticker: str) -> dict | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM valuations WHERE ticker=? ORDER BY analyzed_at DESC LIMIT 1",
+                (ticker,),
+            ).fetchone()
+            return dict(row) if row else None
 
     def get_latest_macro(self) -> list:
         with self._connect() as conn:

@@ -49,6 +49,21 @@ class TradingHoursConfig:
 
 
 @dataclass
+class ScreeningConfig:
+    universe: list
+    max_picks: int
+    min_gap_pct: float
+    min_avg_daily_volume: int
+    min_price: float
+    max_price: float
+    use_dynamic_universe: bool
+    dynamic_top: int
+    min_rvol: float
+    max_per_sector: int
+    news_catalyst_check: bool
+
+
+@dataclass
 class Config:
     alpaca: AlpacaConfig
     polygon: PolygonConfig
@@ -57,7 +72,9 @@ class Config:
     risk: RiskConfig
     signal: SignalConfig
     trading_hours: TradingHoursConfig
+    screening: ScreeningConfig
     db_path: str
+    reports_dir: str
     log_level: str
 
 
@@ -71,6 +88,20 @@ def load_config(path: str = "config.json") -> Config:
         raise ValueError(f"Invalid JSON in '{path}': {e}")
 
     alpaca_raw = d["alpaca"]
+
+    # watchlist.json written by the screener overrides config tickers for the session
+    tickers = d["watchlist"]["tickers"]
+    _WATCHLIST_FILE = "watchlist.json"
+    if os.path.exists(_WATCHLIST_FILE):
+        try:
+            with open(_WATCHLIST_FILE) as wf:
+                wdata = json.load(wf)
+            if wdata.get("tickers"):
+                tickers = wdata["tickers"]
+        except (json.JSONDecodeError, KeyError):
+            pass  # corrupted file — fall back to config
+
+    screening_raw = d.get("screening", {})
     cfg = Config(
         alpaca=AlpacaConfig(
             api_key=os.environ.get("ALPACA_API_KEY") or alpaca_raw["api_key"],
@@ -82,11 +113,25 @@ def load_config(path: str = "config.json") -> Config:
             api_key=os.environ.get("POLYGON_API_KEY") or d["polygon"]["api_key"],
         ),
         claude=ClaudeConfig(**d["claude"]),
-        tickers=d["watchlist"]["tickers"],
+        tickers=tickers,
         risk=RiskConfig(**d["risk"]),
         signal=SignalConfig(**d["signal"]),
         trading_hours=TradingHoursConfig(**d["trading_hours"]),
+        screening=ScreeningConfig(
+            universe=screening_raw.get("universe", []),
+            max_picks=screening_raw.get("max_picks", 5),
+            min_gap_pct=screening_raw.get("min_gap_pct", 2.0),
+            min_avg_daily_volume=screening_raw.get("min_avg_daily_volume", 500_000),
+            min_price=screening_raw.get("min_price", 5.0),
+            max_price=screening_raw.get("max_price", 500.0),
+            use_dynamic_universe=screening_raw.get("use_dynamic_universe", True),
+            dynamic_top=screening_raw.get("dynamic_top", 50),
+            min_rvol=screening_raw.get("min_rvol", 0.0),
+            max_per_sector=screening_raw.get("max_per_sector", 2),
+            news_catalyst_check=screening_raw.get("news_catalyst_check", True),
+        ),
         db_path=d["database"]["path"],
+        reports_dir=d["reports"]["output_dir"],
         log_level=d.get("log_level", "INFO"),
     )
 

@@ -26,8 +26,9 @@ import schedule
 from loadconfig import load_config
 from storage import Storage
 from data import edgar, financials, macro
-from analysis import document_analyzer, earnings_scorer
+from analysis import document_analyzer, earnings_scorer, valuation
 from portfolio import thesis_monitor
+from alerts import email_alert
 from reports import weekly_report
 
 logger = logging.getLogger(__name__)
@@ -114,6 +115,23 @@ def run_earnings_analysis(ticker: str, db: Storage, cfg, force: bool = False):
             db.save_financials(ticker, fin_period, merged)
 
 
+def run_valuation_analysis(ticker: str, db: Storage, cfg, force: bool = False):
+    """Fetch key metrics and ask Claude to grade the valuation."""
+    from datetime import date
+    period = date.today().isoformat()
+    if not force and db.has_valuation(ticker, period):
+        logger.info("Skipping valuation for %s %s — already in database", ticker, period)
+        return
+    metrics = financials.get_key_metrics(ticker, cfg.fmp.api_key)
+    if not metrics:
+        logger.warning("No key metrics for %s — skipping valuation", ticker)
+        return
+    result = valuation.assess(ticker, metrics, cfg.claude)
+    if result:
+        db.save_valuation(ticker, period, result)
+        logger.info("Valuation for %s: %s", ticker, result.get("valuation_grade"))
+
+
 def run_macro_refresh(db: Storage, cfg):
     """Refresh all macro indicators from FRED."""
     snaps = macro.fetch_all(cfg.fred.api_key)
@@ -123,18 +141,28 @@ def run_macro_refresh(db: Storage, cfg):
 
 
 def run_thesis_check(db: Storage, cfg):
-    """Check all active theses against latest data."""
+    """Check all active theses against latest data and alert on flags."""
     results = thesis_monitor.check_all(db, cfg.claude)
     flagged = [r for r in results if r.get("flag")]
     if flagged:
         logger.warning("%d thesis(es) flagged — review required", len(flagged))
+        active = {t["id"]: t for t in db.get_active_theses()}
+        for r in flagged:
+            thesis = active.get(r.get("thesis_id"), {})
+            email_alert.send_flag_alert(
+                ticker=r["ticker"],
+                flag_reason=r.get("flag_reason", ""),
+                thesis_text=thesis.get("thesis_text", ""),
+                cfg=cfg.alerts.email,
+            )
     else:
         logger.info("All active theses checked — no flags")
 
 
 def run_weekly_report(db: Storage, cfg):
     """Generate and write the weekly report."""
-    path = weekly_report.generate(db, cfg.tickers, cfg.reports_dir)
+    path = weekly_report.generate(db, cfg.tickers, cfg.reports_dir,
+                                  fmp_api_key=cfg.fmp.api_key)
     logger.info("Weekly report: %s", path)
 
 
@@ -153,6 +181,7 @@ def full_cycle(db: Storage, cfg, tickers: list, force: bool = False):
             logger.info("--- Analyzing %s ---", ticker)
             run_filing_analysis(ticker, db, cfg, force=force)
             run_earnings_analysis(ticker, db, cfg, force=force)
+            run_valuation_analysis(ticker, db, cfg, force=force)
         finally:
             lock.release()
 

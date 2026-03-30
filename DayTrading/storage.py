@@ -163,6 +163,58 @@ class Storage:
             ).fetchone()
             return row[0]
 
+    def get_today_bars(self, ticker: str, resolution: str = "1min") -> list:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT timestamp, open, high, low, close, volume, vwap
+                FROM bars
+                WHERE ticker = ? AND resolution = ?
+                  AND date(timestamp) = date('now')
+                ORDER BY timestamp
+                """,
+                (ticker, resolution),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def get_today_signals(self) -> list:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT ticker, direction, signal_strength, sentiment_score,
+                       sentiment_delta, close, generated_at
+                FROM signals
+                WHERE date(generated_at) = date('now')
+                ORDER BY generated_at
+                """
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def get_today_trades(self) -> list:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT ticker, direction, entry_price, exit_price, stop_price,
+                       target_price, qty, status, pnl, opened_at, closed_at
+                FROM trades
+                WHERE date(opened_at) = date('now')
+                ORDER BY opened_at
+                """
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def get_today_news_events(self) -> list:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT ticker, headline, sentiment_score, confidence, event_type, received_at
+                FROM news_events
+                WHERE date(received_at) = date('now')
+                ORDER BY received_at DESC
+                """
+            ).fetchall()
+            return [dict(r) for r in rows]
+
     def prune_bars(self, keep_days: int = 5):
         """
         Delete bars older than keep_days to prevent unbounded table growth.

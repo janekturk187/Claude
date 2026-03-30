@@ -15,6 +15,7 @@ Usage:
 """
 
 import logging
+import os
 import signal
 import sys
 import threading
@@ -29,8 +30,26 @@ from analysis.sentiment import classify_headline, SessionSentiment
 from signals.confluence import evaluate as evaluate_signal
 from execution.risk_gate import check as risk_check
 from execution.order_manager import OrderManager
+from reports import session_report, plots
+from backtest import engine as bt_engine, metrics as bt_metrics, report as bt_report
+from data import historical
 
 logger = logging.getLogger(__name__)
+
+_PID_FILE = "trading.pid"
+
+
+def _write_pid():
+    with open(_PID_FILE, "w") as f:
+        f.write(str(os.getpid()))
+
+
+def _remove_pid():
+    try:
+        os.remove(_PID_FILE)
+    except FileNotFoundError:
+        pass
+
 
 # Monotonic timestamp of the last headline received per ticker
 _last_news_time: dict[str, float] = {}
@@ -53,14 +72,83 @@ def _check_stream_health(tickers: list) -> None:
 
 
 def run():
+    import argparse
+    parser = argparse.ArgumentParser(description="Day Trading System")
+    parser.add_argument("--paper", action="store_true",
+                        help="Force paper trading mode (overrides config)")
+    parser.add_argument("--report", action="store_true",
+                        help="Generate session report for today and exit")
+    parser.add_argument("--plot", action="store_true",
+                        help="Generate session review plots for today and exit")
+    parser.add_argument("--backtest", action="store_true",
+                        help="Run backtest on historical data and exit")
+    parser.add_argument("--start", default=None,
+                        help="Backtest start date YYYY-MM-DD (required with --backtest)")
+    parser.add_argument("--end", default=None,
+                        help="Backtest end date YYYY-MM-DD (required with --backtest)")
+    parser.add_argument("--sentiment", type=float, default=None,
+                        help="Fixed sentiment score for backtest (default: min_sentiment_score)")
+    parser.add_argument("--equity", type=float, default=100_000.0,
+                        help="Starting equity for backtest position sizing (default: 100000)")
+    args = parser.parse_args()
+
     cfg = load_config("config.json")
+
+    if args.paper:
+        cfg.alpaca.paper = True
 
     logging.basicConfig(
         level=getattr(logging, cfg.log_level, logging.INFO),
         format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
     )
 
+    if cfg.alpaca.paper:
+        logger.warning("=" * 60)
+        logger.warning("PAPER TRADING MODE — no real orders will be placed")
+        logger.warning("=" * 60)
+    else:
+        logger.warning("=" * 60)
+        logger.warning("LIVE TRADING MODE — real orders WILL be placed")
+        logger.warning("=" * 60)
+
     db = Storage(cfg.db_path)
+
+    if args.report:
+        path = session_report.generate(db, cfg.tickers, cfg.reports_dir, paper=cfg.alpaca.paper)
+        logger.info("Session report: %s", path)
+        return
+
+    if args.plot:
+        saved = plots.generate(db, cfg.tickers, cfg.reports_dir, paper=cfg.alpaca.paper)
+        logger.info("Plots generated: %d file(s)", len(saved))
+        for p in saved:
+            logger.info("  %s", p)
+        return
+
+    if args.backtest:
+        if not args.start or not args.end:
+            logger.error("--backtest requires --start YYYY-MM-DD and --end YYYY-MM-DD")
+            return
+        from datetime import datetime, timezone as tz
+        start_dt = datetime.strptime(args.start, "%Y-%m-%d").replace(tzinfo=tz.utc)
+        end_dt   = datetime.strptime(args.end,   "%Y-%m-%d").replace(tzinfo=tz.utc)
+        logger.info("Running backtest %s → %s for: %s", args.start, args.end, cfg.tickers)
+        bars_by_ticker = {}
+        for ticker in cfg.tickers:
+            bars_by_ticker[ticker] = historical.fetch_bars(
+                ticker, cfg.alpaca.api_key, cfg.alpaca.secret_key, start_dt, end_dt
+            )
+        trades  = bt_engine.run(bars_by_ticker, cfg,
+                                sentiment_score=args.sentiment,
+                                starting_equity=args.equity)
+        m       = bt_metrics.calculate(trades)
+        path    = bt_report.generate(m, trades, cfg.tickers, cfg.reports_dir,
+                                     args.start, args.end,
+                                     args.sentiment or cfg.signal.min_sentiment_score,
+                                     args.equity)
+        logger.info("Backtest complete — %d trade(s), P&L: $%+.2f", m["total_trades"], m["total_pnl"])
+        logger.info("Backtest report: %s", path)
+        return
     db.prune_bars()
     session_sentiment = SessionSentiment(window=cfg.signal.session_sentiment_window)
     order_manager = OrderManager(cfg)
@@ -134,11 +222,24 @@ def run():
     price_thread = threading.Thread(target=price_stream.start, daemon=True)
     price_thread.start()
 
+    _write_pid()
+
     def shutdown(signum, frame):
         logger.info("Shutting down — cancelling open orders...")
         order_manager.cancel_all_open()
         news_stream.stop()
         price_stream.stop()
+        try:
+            path = session_report.generate(db, cfg.tickers, cfg.reports_dir, paper=cfg.alpaca.paper)
+            logger.info("Session report: %s", path)
+        except Exception as e:
+            logger.error("Failed to generate session report: %s", e)
+        try:
+            saved = plots.generate(db, cfg.tickers, cfg.reports_dir, paper=cfg.alpaca.paper)
+            logger.info("Plots generated: %d file(s)", len(saved))
+        except Exception as e:
+            logger.error("Failed to generate plots: %s", e)
+        _remove_pid()
         sys.exit(0)
 
     signal.signal(signal.SIGINT, shutdown)

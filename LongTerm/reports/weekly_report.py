@@ -13,11 +13,12 @@ import os
 from datetime import datetime, timezone
 
 from analysis.earnings_scorer import consecutive_beats
+from portfolio.position_tracker import get_portfolio_summary
 
 logger = logging.getLogger(__name__)
 
 
-def generate(db, tickers: list, output_dir: str) -> str:
+def generate(db, tickers: list, output_dir: str, fmp_api_key: str = None) -> str:
     """
     Generate a weekly report and write it to output_dir.
     Returns the path to the written file.
@@ -28,6 +29,28 @@ def generate(db, tickers: list, output_dir: str) -> str:
     now = datetime.now(timezone.utc)
     lines.append(f"# Weekly Research Report")
     lines.append(f"Generated: {now.strftime('%Y-%m-%d %H:%M UTC')}\n")
+
+    # --- Open Positions ---
+    lines.append("## Open Positions\n")
+    if fmp_api_key:
+        positions = get_portfolio_summary(db, fmp_api_key)
+    else:
+        positions = db.get_open_positions()
+    if not positions:
+        lines.append("_No open positions on record._\n")
+    else:
+        lines.append("| Ticker | Shares | Entry | Current | Unr. P&L | P&L % | Since |")
+        lines.append("|--------|--------|-------|---------|----------|-------|-------|")
+        for p in positions:
+            current = f"${p['current_price']:.2f}" if p.get("current_price") else "n/a"
+            pnl     = f"${p['unrealized_pnl']:+,.2f}" if p.get("unrealized_pnl") is not None else "n/a"
+            pnl_pct = f"{p['pnl_pct']:+.1f}%" if p.get("pnl_pct") is not None else "n/a"
+            since   = p["entry_date"][:10] if p.get("entry_date") else "?"
+            lines.append(
+                f"| {p['ticker']} | {p['shares']} | ${p['entry_price']:.2f} "
+                f"| {current} | {pnl} | {pnl_pct} | {since} |"
+            )
+        lines.append("")
 
     # --- Active Theses ---
     lines.append("## Active Theses\n")
@@ -71,20 +94,23 @@ def generate(db, tickers: list, output_dir: str) -> str:
 
     # --- Company Profile Scores ---
     lines.append("## Latest Company Profile Scores\n")
-    lines.append("| Ticker | Thesis Score | Revenue | Margins | Tone | Guidance |")
-    lines.append("|--------|-------------|---------|---------|------|----------|")
+    lines.append("| Ticker | Thesis Score | Revenue | Margins | Tone | Guidance | Valuation |")
+    lines.append("|--------|-------------|---------|---------|------|----------|-----------|")
     for ticker in tickers:
         p = db.get_latest_profile(ticker)
+        v = db.get_latest_valuation(ticker)
+        grade = v.get("valuation_grade", "n/a") if v else "—"
         if p:
             lines.append(
                 f"| {ticker} | {p.get('thesis_score', 'n/a')} "
                 f"| {p.get('revenue_trend', 'n/a')} "
                 f"| {p.get('margin_trend', 'n/a')} "
                 f"| {p.get('management_tone', 'n/a')} "
-                f"| {p.get('guidance_direction', 'n/a')} |"
+                f"| {p.get('guidance_direction', 'n/a')} "
+                f"| {grade} |"
             )
         else:
-            lines.append(f"| {ticker} | — | — | — | — | — |")
+            lines.append(f"| {ticker} | — | — | — | — | — | {grade} |")
     lines.append("")
 
     # --- Macro Environment ---
